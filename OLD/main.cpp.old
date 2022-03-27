@@ -7,15 +7,16 @@
 #define cartao_inserido 25
 #define finaliza 15
 #define TEMPO_DEBOUNCE 550 //ms
-#define RED 2
-
-
-
-
+ 
 int contador_acionamentos = 0;
 unsigned long timestamp_ultimo_acionamento = 0;
 unsigned long timestamp_ultimo_acionamento1 = 0;
 
+//descomentar o define abaixo libera o modo debug, com mais saídas na serial, reduzindo a velocidade de execução do programa
+//#define DEBUG
+
+
+/* Set the delay between fresh samples */
 uint16_t BNO055_SAMPLERATE_DELAY_MS = 50; //
 
 double ax = -1000000, ay = -1000000 , az = -1000000; //acc - dumb values, easy to spot problem
@@ -27,30 +28,54 @@ double lx = -1000000, ly = -1000000 , lz = -1000000; //linear
 double grx = -1000000, gry = -1000000 , grz = -1000000; //gravity
 
 String dataMessage;
+
+//const int cartao_inserido = 25;
+//const int habilita_gravacao = 15;
 bool habilita_gravar = 0;
 const int ledaz =  2;
 bool continuar;
 unsigned long tseconds; 
 
- int var1,var2,var3,var4;
- int16_t tcomb;
-
+// Check I2C device address and correct line below (by default address is 0x29 or 0x28)
+//                                   id, address
 Adafruit_BNO055 bno = Adafruit_BNO055(55, 0x29); //
+
+//sdcard
 File myFile;
 const int chipSelect = 5;
 
+//void initSDCard(void);
+
+// Initialize SD card
 void initSDCard(){
+  #ifdef DEBUG
+    Serial.println("Initializing Micro SD card...");
+  // open the file. note that only one file can be open at a time,
+  // so you have to close this one before opening another.
+  #endif             
+
   myFile = SD.open("data.txt", FILE_WRITE);
+    // if the file opened okay, write to it:
   if (myFile) {
-  myFile.println("Inicio da coleta: ");
-  myFile.println("time;acelerometro(m/s^2);orientacao(degrees);campo_magnetico(uT);giroscopio(rad/s);vetor_de_rotacao(deg);aceleracao_linear(m/s^2);gravidade(m/s^2)");
-  myFile.println("millis;ax;ay;az;ox;oy;oz;mx;my;mz;gx;gy;gz;rx;ry;rz;lx;ly;lz;grx;gry;grz;");
-  myFile.flush();
-  // close the file:
-  myFile.close();
- 
-  } else 
-  {
+    #ifdef DEBUG
+    Serial.println("Writing to data.txt...");
+    #endif
+    myFile.println("Inicio da coleta: ");
+    
+    //myFile.println(timelog.c_str());
+    myFile.println("time;acelerometro;orientacao;campo_magnetico;giroscopio;vetor_de_rotacao;aceleracao_linear;gravidade");
+    myFile.println("millis;ax;ay;az;ox;oy;oz;mx;my;mz;gx;gy;gz;rx;ry;rz;lx;ly;lz;grx;gry;grz;");
+	  myFile.flush();
+    // close the file:
+    myFile.close();
+    #ifdef DEBUG
+    Serial.println("done.");
+    #endif
+  } else {
+    #ifdef DEBUG
+    // if the file didn't open, print an error:
+    Serial.println("error opening data.txt");
+    #endif
   }
   
 }
@@ -60,6 +85,10 @@ void IRAM_ATTR funcao_ISR()
 /* Conta acionamentos do botão considerando debounce */
 if ( (millis() - timestamp_ultimo_acionamento) >= TEMPO_DEBOUNCE )
 {
+#ifdef DEBUG
+  Serial.println("Interrupt");
+  contador_acionamentos++;
+#endif
 habilita_gravar = !habilita_gravar;
 timestamp_ultimo_acionamento = millis();
 }
@@ -69,129 +98,184 @@ void IRAM_ATTR funcao_cartao()
 {
 /* Conta acionamentos do botão considerando debounce */
 if ( (millis() - timestamp_ultimo_acionamento1) >= TEMPO_DEBOUNCE )
-  {
-  myFile = SD.open("data.txt", FILE_WRITE); //abre o arquivo uma vez e o mantem aberto
-  timestamp_ultimo_acionamento1 = millis();
-  }
-}
-
-void calibra()
 {
-uint8_t system, gyro, accel, mag = 0;
-bool saiif=0;
-while(saiif == 0)
-{
+myFile = SD.open("data.txt", FILE_WRITE); //abre o arquivo uma vez e o mantem aberto
 
-  bno.getCalibration(&system, &gyro, &accel, &mag);
-
-  var1 = 83 * gyro; 
-  var2 = 83 * system; 
-  var3 = 83 * accel; 
-  var4 = 83 * mag; 
-  tcomb = (var1+var2+var3+var4);
-
-delay(tcomb);
-digitalWrite(RED, HIGH);
-delay(tcomb);
-digitalWrite(RED, LOW);
-
-if (system == 3 && gyro == 3 && accel == 3 && mag == 3 ) {saiif = 1;}
-
-  Serial.println();
-  Serial.print("Calibration: Sys=");
-  Serial.print(system);
-  Serial.print(" Gyro=");
-  Serial.print(gyro);
-  Serial.print(" Accel=");
-  Serial.print(accel);
-  Serial.print(" Mag=");
-  Serial.println(mag);
+timestamp_ultimo_acionamento1 = millis();
 }
-
-if (saiif == 1) {digitalWrite(RED,LOW);}
-Serial.println("CALIBRADO!");
-
 }
-
 
 void setup(void)
 {
+#ifdef DEBUG  
 Serial.begin(115200);
+#endif
 pinMode(SS, OUTPUT);
 pinMode(cartao_inserido, INPUT);
 pinMode(finaliza, INPUT);
 pinMode(ledaz, OUTPUT);
-pinMode(RED, OUTPUT);
-
 attachInterrupt(finaliza, funcao_ISR, FALLING);
 attachInterrupt(cartao_inserido, funcao_cartao, FALLING);
-
-  if (!SD.begin(26, 14, 13, 27)) 
-  {
-  return;
+  if (!SD.begin(26, 14, 13, 27)) {
+  #ifdef DEBUG
+    Serial.println("initialization failed!");
+    while(1);
+  #endif
+    return;
   }
-
+#ifdef DEBUG
+  Serial.println("SD initialization done.");
+  Serial.println("Orientation Sensor Test"); Serial.println("");
+#endif
   /* Initialise the sensor */
   if (!bno.begin())
-    {
-    }
+  {
+    #ifdef DEBUG
+    /* There was a problem detecting the BNO055 ... check your connections */
+    Serial.print("Ooops, no BNO055 detected ... Check your wiring or I2C ADDR!");
+    while (1);
+    #endif
+  }
 setCpuFrequencyMhz(80); //crystal mounted = 40MHz, so freq_min is 10 (40/4) max 80
-
-calibra();
-digitalWrite(RED,LOW);
-
 initSDCard();
+
+
+//Append the data to file
 myFile = SD.open("data.txt", FILE_WRITE); //abre o arquivo uma vez e o mantem aberto
+// if the file opened okay, write to it:
 }
 
+
+
+
 void printEvent(sensors_event_t* event) {
+
+
   if (event->type == SENSOR_TYPE_ACCELEROMETER) {
+    #ifdef DEBUG
+    Serial.print("Accl:");
+    #endif
     ax = event->acceleration.x;
     ay = event->acceleration.y;
     az = event->acceleration.z;
+#ifdef DEBUG
+  Serial.print("\tx= ");
+  Serial.print(ax);
+  Serial.print(" |\ty= ");
+  Serial.print(ay);
+  Serial.print(" |\tz= ");
+  Serial.println(az);
+#endif
   }
   else if (event->type == SENSOR_TYPE_ORIENTATION) {
+    #ifdef DEBUG
+    Serial.print("Orient:");
+    #endif
     ox = event->orientation.x;
     oy = event->orientation.y;
     oz = event->orientation.z;
+#ifdef DEBUG
+  Serial.print("\tx= ");
+  Serial.print(ox);
+  Serial.print(" |\ty= ");
+  Serial.print(oy);
+  Serial.print(" |\tz= ");
+  Serial.println(oz);
+#endif
   }
   else if (event->type == SENSOR_TYPE_MAGNETIC_FIELD) {
+    #ifdef DEBUG
+    Serial.print("Mag:");
+    #endif
     mx = event->magnetic.x;
     my = event->magnetic.y;
     mz = event->magnetic.z;
+#ifdef DEBUG
+  Serial.print("\tx= ");
+  Serial.print(mx);
+  Serial.print(" |\ty= ");
+  Serial.print(my);
+  Serial.print(" |\tz= ");
+  Serial.println(mz);
+#endif
   }
   else if (event->type == SENSOR_TYPE_GYROSCOPE) {
+    #ifdef DEBUG
+    Serial.print("Gyro:");
+    #endif
     gx = event->gyro.x;
     gy = event->gyro.y;
     gz = event->gyro.z;
+#ifdef DEBUG
+  Serial.print("\tx= ");
+  Serial.print(gx);
+  Serial.print(" |\ty= ");
+  Serial.print(gy);
+  Serial.print(" |\tz= ");
+  Serial.println(gz);
+#endif
   }
   else if (event->type == SENSOR_TYPE_ROTATION_VECTOR) {
+    #ifdef DEBUG
+    Serial.print("Rot:");
+    #endif
     rx = event->gyro.x;
     ry = event->gyro.y;
     rz = event->gyro.z;
+#ifdef DEBUG
+  Serial.print("\tx= ");
+  Serial.print(rx);
+  Serial.print(" |\ty= ");
+  Serial.print(ry);
+  Serial.print(" |\tz= ");
+  Serial.println(rz);
+#endif
   }
   else if (event->type == SENSOR_TYPE_LINEAR_ACCELERATION) {
+    #ifdef DEBUG
+    Serial.print("Linear:");
+    #endif
     lx = event->acceleration.x;
     ly = event->acceleration.y;
     lz = event->acceleration.z;
+#ifdef DEBUG
+  Serial.print("\tx= ");
+  Serial.print(lx);
+  Serial.print(" |\ty= ");
+  Serial.print(ly);
+  Serial.print(" |\tz= ");
+  Serial.println(lz);
+#endif
   }
   else if (event->type == SENSOR_TYPE_GRAVITY) {
+    #ifdef DEBUG
+    Serial.print("Gravity:");
+    #endif
     grx = event->acceleration.x;
     gry = event->acceleration.y;
     grz = event->acceleration.z;
+#ifdef DEBUG
+  Serial.print("\tx= ");
+  Serial.print(grx);
+  Serial.print(" |\ty= ");
+  Serial.print(gry);
+  Serial.print(" |\tz= ");
+  Serial.println(grz);
+#endif
   }
   else {
- 
+    #ifdef DEBUG
+    Serial.print("Unk:");
+    #endif
   }
-
+//cria a string com dados
 tseconds = millis();
 dataMessage = String(tseconds) + ";" + String(ax) + ";" + String(ay) + ";" + String(az) + ";" + String(ox) + ";" + String(oy) + ";" + String(oz) + ";" + String(mx) + ";" + String(my) + ";" + String(mz) + ";" + String(gx) + ";" + String(gy) + ";" + String(gz) + ";" +  String(rx) + ";" + String(ry) + ";" + String(rz) + ";" + String(lx) + ";" + String(ly) + ";" + String(lz) + ";" + String(grx) + ";" + String(gry) + ";" + String(grz) + ";" + "\r\n";
 
 }
 
-
 void loop(void)
-{   //could add VECTOR_ACCELEROMETER, VECTOR_MAGNETOMETER,VECTOR_GRAVITY...
+{ //could add VECTOR_ACCELEROMETER, VECTOR_MAGNETOMETER,VECTOR_GRAVITY...
   sensors_event_t orientationData , angVelocityData , linearAccelData, magnetometerData, accelerometerData, gravityData;
   bno.getEvent(&orientationData, Adafruit_BNO055::VECTOR_EULER);
   bno.getEvent(&angVelocityData, Adafruit_BNO055::VECTOR_GYROSCOPE);
@@ -207,6 +291,28 @@ void loop(void)
   printEvent(&accelerometerData);
   printEvent(&gravityData);
 
+#ifdef DEBUG
+  int8_t boardTemp = bno.getTemp();
+  Serial.println();
+  Serial.print(F("temperature: "));
+  Serial.println(boardTemp);
+
+  uint8_t system, gyro, accel, mag = 0;
+  bno.getCalibration(&system, &gyro, &accel, &mag);
+  Serial.println();
+  Serial.print("Calibration: Sys=");
+  Serial.print(system);
+  Serial.print(" Gyro=");
+  Serial.print(gyro);
+  Serial.print(" Accel=");
+  Serial.print(accel);
+  Serial.print(" Mag=");
+  Serial.println(mag);
+
+  Serial.println("--");
+#endif
+
+
 //continuar = digitalRead(cartao_inserido);
 if (habilita_gravar == 0) 
     {
@@ -214,11 +320,17 @@ if (habilita_gravar == 0)
 
         if (myFile) 
             {
-      
+            #ifdef DEBUG  
+            Serial.println("Saving data: ");
+            Serial.println(dataMessage);
+            #endif
             myFile.print(dataMessage.c_str());
             }    
           else {
-     
+          #ifdef DEBUG
+          // if the file didn't open, print an error:
+          Serial.println("error opening data.txt");
+          #endif
               }
     }
   
@@ -230,6 +342,6 @@ else if (habilita_gravar == 1)
   digitalWrite(ledaz, LOW);
   }
 
- // delay(BNO055_SAMPLERATE_DELAY_MS);
+  delay(BNO055_SAMPLERATE_DELAY_MS);
 }
 
